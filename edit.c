@@ -106,13 +106,14 @@ static unsigned char initialFgColor = 0;
 static unsigned char initialBgColor = 0;
 
 struct editorSyntax {
-    char **filematch;
-    char **keywords;
+    char *extension;
     char *interpreter;
+    char **keywords;
     char singleline_comment_start[2];
     char multiline_comment_start[3];
     char multiline_comment_end[3];
     int flags;
+    struct editorSyntax *next;
 };
 
 /* This structure represents a single line of the file we are editing. */
@@ -207,28 +208,27 @@ ssize_t getline(char **buf, size_t *bufsiz, FILE *fp);
  * There is no support to highlight patterns currently. */
 
 /* C / C++ */
-char *C_HL_extensions[] = {".c",".h",".cpp",".hpp",".cc",NULL};
 char *C_HL_keywords[] = {
 	/* C Keywords */
 	"auto","break","case","continue","default","do","else","enum",
 	"extern","for","goto","if","register","return","sizeof","static",
 	"struct","switch","typedef","union","volatile","while","NULL",
 
-	/* C++ Keywords */
-	"alignas","alignof","and","and_eq","asm","bitand","bitor","class",
-	"compl","constexpr","const_cast","deltype","delete","dynamic_cast",
-	"explicit","export","false","friend","inline","mutable","namespace",
-	"new","noexcept","not","not_eq","nullptr","operator","or","or_eq",
-	"private","protected","public","reinterpret_cast","static_assert",
-	"static_cast","template","this","thread_local","throw","true","try",
-	"typeid","typename","virtual","xor","xor_eq",
-
 	/* C types */
-        "int|","long|","double|","float|","char|","unsigned|","signed|",
-        "void|","short|","auto|","const|","bool|",NULL
+    "int|","long|","double|","float|","char|","unsigned|","signed|",
+    "void|","short|","auto|","const|","bool|",NULL
 };
 
-char *Lox_HL_extensions[] = {".lox", NULL};
+char *BAS_HL_keywords[] = {
+	/* Keywords */
+	"CLS","PRINT","IF","GOTO","INPUT","LET","GOSUB","FOR","TO","STEP","CLEAR",
+    "NEW","LIST","RUN","END","DIM",
+	/* Functions */
+    "ABS|","AND|","ATN|","COS|","EXP|","INT|","LOG|","NOT|","OR|","RND|",
+    "SGN|","SIN|","SQR|","TAN|","LEN|","CHR$|","MID$|","LEFT$|","RIGHT$|",
+    "ASC|",NULL
+};
+
 char *Lox_HL_keywords[] = {
     /* Lox Keywords */
     "and","class","else","false","for","fun","if","nil","or","print",  
@@ -243,23 +243,58 @@ char *Lox_HL_keywords[] = {
 
 /* Here we define an array of syntax highlights by extensions, keywords,
  * comments delimiters and flags. */
-struct editorSyntax HLDB[] = {
-    {
-        /* C / C++ */
-        C_HL_extensions,
-        C_HL_keywords,
-        "/sd/lox.pgz",
-        "//","/*","*/",
-        HL_HIGHLIGHT_STRINGS | HL_HIGHLIGHT_NUMBERS
-    },
-    {       
-        Lox_HL_extensions,
-        Lox_HL_keywords,
-        "/sd/lox.pgz",
-        "//","/*","*/",
-        HL_HIGHLIGHT_STRINGS | HL_HIGHLIGHT_NUMBERS
-    }, NULL
+
+struct editorSyntax *HLDB = NULL;
+
+struct editorSyntax cSyntax = {
+    ".c",
+    "",
+    C_HL_keywords,
+    "//","/*","*/",
+    HL_HIGHLIGHT_STRINGS | HL_HIGHLIGHT_NUMBERS,
+    NULL
 };
+
+struct editorSyntax hSyntax = {
+    ".h",
+    "",
+    C_HL_keywords,
+    "//","/*","*/",
+    HL_HIGHLIGHT_STRINGS | HL_HIGHLIGHT_NUMBERS,
+    NULL
+};
+
+struct editorSyntax basSyntax = {
+    ".bas",
+    "basic.pgz",
+    BAS_HL_keywords,
+    "//","/*","*/",
+    HL_HIGHLIGHT_STRINGS | HL_HIGHLIGHT_NUMBERS,
+    NULL
+};
+
+struct editorSyntax loxSyntax = {       
+    ".lox",
+    "lox.pgz",
+    Lox_HL_keywords,
+    "//","/*","*/",
+    HL_HIGHLIGHT_STRINGS | HL_HIGHLIGHT_NUMBERS,
+    NULL
+};
+
+
+void addSyntax(struct editorSyntax *syntax) {
+    syntax->next = HLDB;
+    HLDB = syntax;
+}
+
+void initHLDB() {
+    addSyntax(&cSyntax);
+    addSyntax(&hSyntax);
+    addSyntax(&basSyntax);
+    addSyntax(&loxSyntax);
+}
+
 
 /* ======================= Low level terminal handling ====================== */
 
@@ -565,20 +600,13 @@ static int strEndsWith(const char *str, const char *suffix)
 }
 
 void editorSelectSyntaxHighlight(const char *filename) {
-    struct editorSyntax *s = HLDB;
-
-    while(s != NULL) {
-        unsigned int i = 0;
-
-        char **ext = s->filematch;
-        while (ext != NULL) {
-            if (strEndsWith(filename, *ext)) {
-                E.syntax = s;
-                return;
-            }
-            ext++;
+    struct editorSyntax *ptr = HLDB;
+    while(ptr != NULL) {
+        if (strEndsWith(filename, ptr->extension)) {
+            E.syntax = ptr;
+            break; 
         }
-        s++;
+        ptr = ptr->next;
     }
 }
 
@@ -1228,11 +1256,11 @@ void editorMoveCursor(int key) {
 
 /* Process events arriving from the standard input, which is, the user
  * is typing stuff on the terminal. */
-#define KILO_QUIT_TIMES 3
+#define EDIT_QUIT_TIMES 3
 void editorProcessKeypress() {
     /* When the file is modified, requires Ctrl-q to be pressed N times
      * before actually quitting. */
-    static int quit_times = KILO_QUIT_TIMES;
+    static int quit_times = EDIT_QUIT_TIMES;
 
     int c = editorReadKey();
     switch(c) {
@@ -1320,7 +1348,7 @@ void editorProcessKeypress() {
         break;
     }
 
-    quit_times = KILO_QUIT_TIMES; /* Reset it to the original value. */
+    quit_times = EDIT_QUIT_TIMES; /* Reset it to the original value. */
 }
 
 int editorFileWasModified(void) {
@@ -1359,6 +1387,7 @@ void initEditor(void) {
     E.dirty = 0;
     E.filename = NULL;
     E.syntax = NULL;
+    initHLDB();
 
     chan_dev = sys_chan_device(0);
 
@@ -1369,25 +1398,24 @@ void initEditor(void) {
 }
 
 void runInterpreter() {
-    char *arguments[] = {
-        E.syntax->interpreter,
-        E.filename
-    };
+    char *interpreter = E.syntax->interpreter;
+    char *filename = E.filename;    
+    char *arguments[] = { interpreter, filename };
 
-    if (E.syntax->interpreter) {
+    if (strlen(interpreter) > 0) {
         const char *prevShell = sys_var_get("shell");
         sys_var_set("shell", "edit.pgz");
         sys_var_set("edit_shell", prevShell);
-        sys_var_set("edit_filename", E.filename);
+        sys_var_set("edit_filename", filename);
         restoreDisplay();
-        short result = sys_proc_run(E.syntax->interpreter, 2, arguments);
+        short result = sys_proc_run(interpreter, 2, arguments);
         if (result) {
             const char *message = sys_err_message(result);
-            printf("Unable to start `%s %s`: %s\n", arguments[0], arguments[1], message);
+            printf("Unable to start `%s %s`\n", arguments[0], arguments[1]);
             sys_chan_read_b(0); // Pause for anykey.
         }
     } else {
-        editorSetStatusMessage("Interpreter not available for: %s", E.filename);
+        editorSetStatusMessage("Interpreter not available for: %s", filename);
     }
 }
 
