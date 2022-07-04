@@ -32,7 +32,7 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#define KILO_VERSION "0.0.1"
+#define EDIT_VERSION "0.1.0"
 
 #include <stdlib.h>
 #include <stdio.h>
@@ -61,6 +61,45 @@
 #define HL_HIGHLIGHT_STRINGS (1<<0)
 #define HL_HIGHLIGHT_NUMBERS (1<<1)
 
+static char *helpText = 
+    "\nFoenix Edit -- version " EDIT_VERSION "\n\n"
+    "Copyright (C) 2016 Salvatore Sanfilippo\n"
+    "Copyright (C) 2022 Jesus Garcia\n"
+    "\n"
+    "File handling\n"
+    "-------------\n"
+    "Ctrl+S  Save current file\n"
+    "Ctrl+O  [*] Offer to write file (Save as)\n"
+    "Ctrl+L  [*] Load a file\n"
+    "Ctrl+Q  Quit Foenix Editor\n"
+    "\n"
+    "Editing\n"
+    "-------\n"
+    "Ctrl+T  [*] Tag (Mark) On/Off\n"
+    "Ctrl+X  [*] Cut current line into cutbuffer\n"
+    "Ctrl+C  [*] Copy current line into cutbuffer\n"
+    "Ctrl+V  [*] Paste contents of cutbuffer\n"
+    "\n"
+    "Operations\n"
+    "----------\n"
+    "Ctrl+W  Where is (Search)\n"
+    "Ctrl+R  Run Program\n"
+    "\n"
+    "Moving around\n"
+    "-------------\n"
+    "Ctrl+B  One character backward\n"
+    "Ctrl+F  One character forward\n"
+    "Ctrl+A  To start of line\n"
+    "Ctrl+E  To end of line\n"
+    "Ctrl+P  One line up\n"
+    "Ctrl+N  One line down\n"
+    "Ctrl+U  One page up\n"
+    "Ctrl+D  One page down\n"
+    "Ctrl+G  [*] Go to Line\n"
+    "\n"
+    "[*] = WIP, Comming Soon.\n"
+    "\n"
+    ">> PRESS ANYKEY TO EXIT <<\n";
 
 static int chan_dev = 0;
 static unsigned char initialFgColor = 0;
@@ -111,52 +150,38 @@ struct editorConfig {
 static struct editorConfig E;
 
 enum KEY_ACTION{
-        KEY_NULL = 0,       /* NULL */        
-        CTRL_A = 1,
-        CTRL_B = 2,
-        CTRL_C = 3,
-        CTRL_D = 4,
-        CTRL_E = 5,
-        CTRL_F = 6,
-        CTRL_G = 7,
-        CTRL_H = 8,
-        TAB = 9,
-        CTRL_L = 12,
-        ENTER = 13,
-        CTRL_N = 14,
-        CTRL_O = 15,
-        CTRL_P = 16,
-        CTRL_Q = 17,
-        CTRL_R = 18,
-        CTRL_S = 19,
-        CTRL_T = 20,
-        CTRL_U = 21,
-        CTRL_V = 22,
-        CTRL_W = 23,
-        CTRL_X = 24,                
-        ESC = 27,           /* Escape */
-        BACKSPACE =  127,   /* Backspace */
-        /* The following are just soft codes, not really reported by the
-         * terminal directly. */
-        ARROW_LEFT = 1000,
-        ARROW_RIGHT,
-        ARROW_UP,
-        ARROW_DOWN,
-        DEL_KEY,
-        HOME_KEY,
-        END_KEY,
-        PAGE_UP,
-        PAGE_DOWN,
+    KEY_NULL = 0,       /* NULL */        
+    CTRL_A, CTRL_B, CTRL_C, CTRL_D,
+    CTRL_E, CTRL_F, CTRL_G, CTRL_H,
+    TAB,    CTRL_J, CTRL_K, CTRL_L,
+    ENTER,  CTRL_N, CTRL_O, CTRL_P,
+    CTRL_Q, CTRL_R, CTRL_S, CTRL_T,
+    CTRL_U, CTRL_V, CTRL_W, CTRL_X,
+    CTRL_Y, CTRL_Z, ESC,
+    // Function Keys
+    F1 = 112,
+    F2,  F3,  F4,  F5,
+    F6,  F7,  F8,  F9,
+    F10, F11, F12,
 
-        CTRL_ARROW_LEFT = 2000,
-        CTRL_ARROW_RIGHT,
-        CTRL_ARROW_UP,
-        CTRL_ARROW_DOWN
+    BACKSPACE =  127,   /* Backspace */
+    /* The following are just soft codes, not really reported by the
+        * terminal directly. */
+    ARROW_LEFT = 1000,
+    ARROW_RIGHT,
+    ARROW_UP,
+    ARROW_DOWN,
+    DEL_KEY,
+    HOME_KEY,
+    END_KEY,
+    PAGE_UP,
+    PAGE_DOWN
 };
 
 void editorSetStatusMessage(const char *fmt, ...);
 void restoreDisplay();
 void runInterpreter();
+void showHelp();
 ssize_t getdelim(char **buf, size_t *bufsiz, int delimiter, FILE *fp);
 ssize_t getline(char **buf, size_t *bufsiz, FILE *fp);
 
@@ -902,7 +927,7 @@ void editorRefreshScreen(void) {
             if (E.numrows == 0 && y == E.screenrows/3) {
                 char welcome[80];
                 int welcomelen = snprintf(welcome,sizeof(welcome),
-                    "Foenix Edit -- verison %s\x1b[0K\n", KILO_VERSION);
+                    "Foenix Edit -- verison %s\x1b[0K\n", EDIT_VERSION);
                 int padding = (E.screencols-welcomelen)/2;
                 if (padding) {
                     abAppend(&ab,"~",1);
@@ -1131,6 +1156,7 @@ void editorMoveCursor(int key) {
     erow *row = (filerow >= E.numrows) ? NULL : &E.row[filerow];
 
     switch(key) {
+    case CTRL_B:
     case ARROW_LEFT:
         if (E.cx == 0) {
             if (E.coloff) {
@@ -1149,6 +1175,7 @@ void editorMoveCursor(int key) {
             E.cx -= 1;
         }
         break;
+    case CTRL_F:
     case ARROW_RIGHT:
         if (row && filecol < row->size) {
             if (E.cx == E.screencols-1) {
@@ -1166,6 +1193,7 @@ void editorMoveCursor(int key) {
             }
         }
         break;
+    case CTRL_P:
     case ARROW_UP:
         if (E.cy == 0) {
             if (E.rowoff) E.rowoff--;
@@ -1173,6 +1201,7 @@ void editorMoveCursor(int key) {
             E.cy -= 1;
         }
         break;
+    case CTRL_N:
     case ARROW_DOWN:
         if (filerow < E.numrows) {
             if (E.cy == E.screenrows-1) {
@@ -1227,25 +1256,33 @@ void editorProcessKeypress() {
     case CTRL_S:        /* Ctrl-s */
         editorSave();
         break;
-    case CTRL_F:
+    case CTRL_W:
         editorFind();
         break;
     case DEL_KEY:
         editorMoveCursor(ARROW_RIGHT);
         editorDelChar();
         break;
-    case BACKSPACE:     /* Backspace */
-    case CTRL_H:        /* Ctrl-h */    
+    case BACKSPACE:     /* Backspace */  
         editorDelChar();
         break;
     case CTRL_A:
-        while (E.cx > 0) {
+        while (E.cx > 0 || E.coloff > 0) {
             editorMoveCursor(ARROW_LEFT);
+        }
+        break;
+    case CTRL_E:
+        while (E.cx + E.coloff < E.row->size) {
+            editorMoveCursor(ARROW_RIGHT);
         }
         break;
     case CTRL_R:
         runInterpreter();
         break;
+    case CTRL_H:
+        showHelp();
+        break;
+
     case CTRL_U:
     case CTRL_D:
     case PAGE_UP:
@@ -1262,6 +1299,10 @@ void editorProcessKeypress() {
         }
         break;
 
+    case CTRL_B:
+    case CTRL_F:
+    case CTRL_P:
+    case CTRL_N:
     case ARROW_UP:
     case ARROW_DOWN:
     case ARROW_LEFT:
@@ -1301,6 +1342,13 @@ void restoreDisplay() {
     sys_chan_write(0, (unsigned char *)s, strlen(s));
 }
 
+void showHelp() {
+    restoreDisplay();
+    printf(helpText);
+    sys_chan_read_b(0);
+    sys_chan_write(0,(unsigned char *)"\x1b[37;40m",8);
+}
+
 void initEditor(void) {
     E.cx = 0;
     E.cy = 0;
@@ -1332,7 +1380,12 @@ void runInterpreter() {
         sys_var_set("edit_shell", prevShell);
         sys_var_set("edit_filename", E.filename);
         restoreDisplay();
-        sys_proc_run(E.syntax->interpreter, 2, arguments);
+        short result = sys_proc_run(E.syntax->interpreter, 2, arguments);
+        if (result) {
+            const char *message = sys_err_message(result);
+            printf("Unable to start `%s %s`: %s\n", arguments[0], arguments[1], message);
+            sys_chan_read_b(0); // Pause for anykey.
+        }
     } else {
         editorSetStatusMessage("Interpreter not available for: %s", E.filename);
     }
@@ -1405,7 +1458,7 @@ int main(int argc, char **argv) {
     editorOpen(edit_filename);
     enableRawMode();
     editorSetStatusMessage(
-        "HELP: Ctrl-S = save | Ctrl-Q = quit | Ctrl-F = find | Ctrl-R = run");
+        "Press Ctrl-H for HELP.");
     while(1) {
         editorRefreshScreen();
         editorProcessKeypress();
