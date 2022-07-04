@@ -63,6 +63,8 @@
 
 
 static int chan_dev = 0;
+static unsigned char initialFgColor = 0;
+static unsigned char initialBgColor = 0;
 
 struct editorSyntax {
     char **filematch;
@@ -108,17 +110,29 @@ struct editorConfig {
 static struct editorConfig E;
 
 enum KEY_ACTION{
-        KEY_NULL = 0,       /* NULL */
-        CTRL_C = 3,         /* Ctrl-c */
-        CTRL_D = 4,         /* Ctrl-d */
-        CTRL_F = 6,         /* Ctrl-f */
-        CTRL_H = 8,         /* Ctrl-h */
-        TAB = 9,            /* Tab */
-        CTRL_L = 12,        /* Ctrl+l */
-        ENTER = 13,         /* Enter */
-        CTRL_Q = 17,        /* Ctrl-q */
-        CTRL_S = 19,        /* Ctrl-s */
-        CTRL_U = 21,        /* Ctrl-u */
+        KEY_NULL = 0,       /* NULL */        
+        CTRL_A = 1,
+        CTRL_B = 2,
+        CTRL_C = 3,
+        CTRL_D = 4,
+        CTRL_E = 5,
+        CTRL_F = 6,
+        CTRL_G = 7,
+        CTRL_H = 8,
+        TAB = 9,
+        CTRL_L = 12,
+        ENTER = 13,
+        CTRL_N = 14,
+        CTRL_O = 15,
+        CTRL_P = 16,
+        CTRL_Q = 17,
+        CTRL_R = 18,
+        CTRL_S = 19,
+        CTRL_T = 20,
+        CTRL_U = 21,
+        CTRL_V = 22,
+        CTRL_W = 23,
+        CTRL_X = 24,                
         ESC = 27,           /* Escape */
         BACKSPACE =  127,   /* Backspace */
         /* The following are just soft codes, not really reported by the
@@ -131,7 +145,12 @@ enum KEY_ACTION{
         HOME_KEY,
         END_KEY,
         PAGE_UP,
-        PAGE_DOWN
+        PAGE_DOWN,
+
+        CTRL_ARROW_LEFT = 2000,
+        CTRL_ARROW_RIGHT,
+        CTRL_ARROW_UP,
+        CTRL_ARROW_DOWN
 };
 
 void editorSetStatusMessage(const char *fmt, ...);
@@ -181,6 +200,19 @@ char *C_HL_keywords[] = {
         "void|","short|","auto|","const|","bool|",NULL
 };
 
+char *Lox_HL_extensions[] = {".lox", NULL};
+char *Lox_HL_keywords[] = {
+    /* Lox Keywords */
+    "and","class","else","false","for","fun","if","nil","or","print",  
+    "println","return","super","this","true","var","while",  
+    /* Lox builtin functions */
+    "ticks|","sleep|","cls|","joystick|","str|","num|","push|","pop|",
+    "len|","clear|","peek8|","peek16|","peek32|","poke8|","poke16|",
+    "poke32|","ceil|","floor|","round|","abs|","pow|","exp|","log|",
+    "log10|","log2|","sqrt|","sin|","cos|","tan|","asin|","acos|","atan|",
+    "sinh|","cosh|","tanh|","rand|",NULL
+};
+
 /* Here we define an array of syntax highlights by extensions, keywords,
  * comments delimiters and flags. */
 struct editorSyntax HLDB[] = {
@@ -190,10 +222,14 @@ struct editorSyntax HLDB[] = {
         C_HL_keywords,
         "//","/*","*/",
         HL_HIGHLIGHT_STRINGS | HL_HIGHLIGHT_NUMBERS
-    }
+    },
+    {       
+        Lox_HL_extensions,
+        Lox_HL_keywords,
+        "//","/*","*/",
+        HL_HIGHLIGHT_STRINGS | HL_HIGHLIGHT_NUMBERS
+    }, NULL
 };
-
-#define HLDB_ENTRIES (sizeof(HLDB)/sizeof(HLDB[0]))
 
 /* ======================= Low level terminal handling ====================== */
 
@@ -208,6 +244,9 @@ void disableRawMode() {
 /* Called at exit to avoid remaining in raw mode. */
 void editorAtExit(void) {
     disableRawMode();
+    sys_txt_set_color(chan_dev, initialFgColor, initialBgColor);
+    char *s = "\x1B[2J\x1B[H";
+    sys_chan_write(0, (unsigned char *)s, strlen(s));
 }
 
 /* Raw mode: 1960 magic shit. */
@@ -227,51 +266,51 @@ int editorReadKey() {
 
     nread = sys_chan_read(0,&c,1);
     if (nread == -1) exit(1);
-    return c;
+    //return c;
 
-    // while(1) {
-    //     switch(c) {
-    //     case ESC:    /* escape sequence */
-    //         /* If this is just an ESC, we'll timeout here. */
-    //         if (read(fd,seq,1) == 0) return ESC;
-    //         if (read(fd,seq+1,1) == 0) return ESC;
+    while(1) {
+        switch(c) {
+        case ESC:    /* escape sequence */
+            /* If this is just an ESC, we'll timeout here. */
+            if (sys_chan_read(0,seq,1) == 0) return ESC;
+            if (sys_chan_read(0,seq+1,1) == 0) return ESC;
 
-    //         /* ESC [ sequences. */
-    //         if (seq[0] == '[') {
-    //             if (seq[1] >= '0' && seq[1] <= '9') {
-    //                 /* Extended escape, read additional byte. */
-    //                 if (read(fd,seq+2,1) == 0) return ESC;
-    //                 if (seq[2] == '~') {
-    //                     switch(seq[1]) {
-    //                     case '3': return DEL_KEY;
-    //                     case '5': return PAGE_UP;
-    //                     case '6': return PAGE_DOWN;
-    //                     }
-    //                 }
-    //             } else {
-    //                 switch(seq[1]) {
-    //                 case 'A': return ARROW_UP;
-    //                 case 'B': return ARROW_DOWN;
-    //                 case 'C': return ARROW_RIGHT;
-    //                 case 'D': return ARROW_LEFT;
-    //                 case 'H': return HOME_KEY;
-    //                 case 'F': return END_KEY;
-    //                 }
-    //             }
-    //         }
+            /* ESC [ sequences. */
+            if (seq[0] == '[') {
+                if (seq[1] >= '0' && seq[1] <= '9') {
+                    /* Extended escape, read additional byte. */
+                    if (sys_chan_read(0,seq+2,1) == 0) return ESC;
+                    if (seq[2] == '~') {
+                        switch(seq[1]) {
+                        case '3': return DEL_KEY;
+                        case '5': return PAGE_UP;
+                        case '6': return PAGE_DOWN;
+                        }
+                    }
+                } else {
+                    switch(seq[1]) {
+                    case 'A': return ARROW_UP;
+                    case 'B': return ARROW_DOWN;
+                    case 'C': return ARROW_RIGHT;
+                    case 'D': return ARROW_LEFT;
+                    case 'H': return HOME_KEY;
+                    case 'F': return END_KEY;
+                    }
+                }
+            }
 
-    //         /* ESC O sequences. */
-    //         else if (seq[0] == 'O') {
-    //             switch(seq[1]) {
-    //             case 'H': return HOME_KEY;
-    //             case 'F': return END_KEY;
-    //             }
-    //         }
-    //         break;
-    //     default:
-    //         return c;
-    //     }
-    //}
+            /* ESC O sequences. */
+            else if (seq[0] == 'O') {
+                switch(seq[1]) {
+                case 'H': return HOME_KEY;
+                case 'F': return END_KEY;
+                }
+            }
+            break;
+        default:
+            return c;
+        }
+    }
 }
 
 /* Use the ESC [6n escape sequence to query the horizontal cursor position
@@ -282,7 +321,7 @@ int getCursorPosition(int *rows, int *cols) {
     unsigned int i = 0;
 
     /* Report cursor location */
-    if (sys_chan_write(0, "\x1b[6n", 4) != 4) return -1;
+    if (sys_chan_write(0, (unsigned char *)"\x1b[6n", 4) != 4) return -1;
 
     /* Read the response: ESC [ rows ; cols R */
     while (i < sizeof(buf)-1) {
@@ -302,7 +341,6 @@ int getCursorPosition(int *rows, int *cols) {
  * call fails the function will try to query the terminal itself.
  * Returns 0 on success, -1 on error. */
 int getWindowSize(int ifd, int ofd, int *rows, int *cols) {
-    chan_dev = sys_chan_device(0);
     t_rect region = {0};
 
     if (sys_txt_get_region(chan_dev, &region) == 0) {
@@ -486,21 +524,33 @@ int editorSyntaxToColor(int hl) {
 
 /* Select the syntax highlight scheme depending on the filename,
  * setting it in the global state E.syntax. */
+
+static int strEndsWith(const char *str, const char *suffix)
+{
+    if (!str || !suffix)
+        return 0;
+    size_t lenstr = strlen(str);
+    size_t lensuffix = strlen(suffix);
+    if (lensuffix >  lenstr)
+        return 0;
+    return strncmp(str + lenstr - lensuffix, suffix, lensuffix) == 0;
+}
+
 void editorSelectSyntaxHighlight(char *filename) {
-    for (unsigned int j = 0; j < HLDB_ENTRIES; j++) {
-        struct editorSyntax *s = HLDB+j;
+    struct editorSyntax *s = HLDB;
+
+    while(s != NULL) {
         unsigned int i = 0;
-        while(s->filematch[i]) {
-            char *p;
-            int patlen = strlen(s->filematch[i]);
-            if ((p = strstr(filename,s->filematch[i])) != NULL) {
-                if (s->filematch[i][0] != '.' || p[patlen] == '\0') {
-                    E.syntax = s;
-                    return;
-                }
+
+        char **ext = s->filematch;
+        while (ext != NULL) {
+            if (strEndsWith(filename, ext)) {
+                E.syntax = s;
+                return;
             }
-            i++;
+            ext++;
         }
+        s++;
     }
 }
 
@@ -953,7 +1003,7 @@ void editorRefreshScreen(void) {
     //snprintf(buf,sizeof(buf),"\x1b[%d;%dH",E.cy+1,cx);
     abAppend(&ab,buf,strlen(buf));
     //abAppend(&ab,"\x1b[?25h",6); /* Show cursor. */
-    sys_chan_write(0,ab.b,ab.len);
+    sys_chan_write(0,(unsigned char *)ab.b,ab.len);
     sys_txt_set_xy(chan_dev, cx-1, E.cy);
     sys_txt_set_cursor_visible(chan_dev, 1);
     abFree(&ab);
@@ -1177,21 +1227,31 @@ void editorProcessKeypress() {
     case CTRL_F:
         editorFind();
         break;
-    case BACKSPACE:     /* Backspace */
-    case CTRL_H:        /* Ctrl-h */
     case DEL_KEY:
+        editorMoveCursor(ARROW_RIGHT);
         editorDelChar();
         break;
+    case BACKSPACE:     /* Backspace */
+    case CTRL_H:        /* Ctrl-h */    
+        editorDelChar();
+        break;
+    case CTRL_A:
+        while (E.cx > 0) {
+            editorMoveCursor(ARROW_LEFT);
+        }
+        break;
+    case CTRL_U:
+    case CTRL_D:
     case PAGE_UP:
     case PAGE_DOWN:
-        if (c == PAGE_UP && E.cy != 0)
+        if ((c == PAGE_UP || c == CTRL_U) && E.cy != 0)
             E.cy = 0;
-        else if (c == PAGE_DOWN && E.cy != E.screenrows-1)
+        else if ((c == PAGE_DOWN || c == CTRL_D) && E.cy != E.screenrows-1)
             E.cy = E.screenrows-1;
         {
         int times = E.screenrows;
         while(times--)
-            editorMoveCursor(c == PAGE_UP ? ARROW_UP:
+            editorMoveCursor((c == PAGE_UP || c == CTRL_U) ? ARROW_UP:
                                             ARROW_DOWN);
         }
         break;
@@ -1239,7 +1299,14 @@ void initEditor(void) {
     E.dirty = 0;
     E.filename = NULL;
     E.syntax = NULL;
+
+    chan_dev = sys_chan_device(0);
+
     updateWindowSize();
+
+    sys_txt_get_color(chan_dev, &initialFgColor, &initialBgColor);
+
+    sys_chan_write(0,(unsigned char *)"\x1b[37;40m",8);
 }
 
 // Missing posix functions

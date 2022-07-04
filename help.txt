@@ -1,0 +1,30 @@
+File handling
+Ctrl+S  Save current file
+Ctrl+O	Offer to write file ("Save as")
+Ctrl+L	Load a file
+Ctrl+Q  Quit Foenix Editor
+
+Editing
+Ctrl+X  Cut current line into cutbuffer
+Ctrl+C	Copy current line into cutbuffer
+Ctrl+V	Paste contents of cutbuffer
+
+Deletion
+Ctrl+H	Delete character before cursor      
+Ctrl+D	Delete character under cursor
+
+Operations
+Ctrl+W	Where is (Search)
+Ctrl+T  Execute some command
+Ctrl+R   Run Program
+
+Moving around
+Ctrl+B  One character backward
+Ctrl+F	One character forward
+Ctrl+A	To start of line
+Ctrl+E	To end of line
+Ctrl+P	One line up
+Ctrl+N	One line down
+Ctrl+U	One page up
+Ctrl+D	One page down
+Ctrl+G	Go to Line
