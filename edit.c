@@ -69,6 +69,7 @@ static unsigned char initialBgColor = 0;
 struct editorSyntax {
     char **filematch;
     char **keywords;
+    char *interpreter;
     char singleline_comment_start[2];
     char multiline_comment_start[3];
     char multiline_comment_end[3];
@@ -154,6 +155,8 @@ enum KEY_ACTION{
 };
 
 void editorSetStatusMessage(const char *fmt, ...);
+void restoreDisplay();
+void runInterpreter();
 ssize_t getdelim(char **buf, size_t *bufsiz, int delimiter, FILE *fp);
 ssize_t getline(char **buf, size_t *bufsiz, FILE *fp);
 
@@ -220,12 +223,14 @@ struct editorSyntax HLDB[] = {
         /* C / C++ */
         C_HL_extensions,
         C_HL_keywords,
+        "/sd/lox.pgz",
         "//","/*","*/",
         HL_HIGHLIGHT_STRINGS | HL_HIGHLIGHT_NUMBERS
     },
     {       
         Lox_HL_extensions,
         Lox_HL_keywords,
+        "/sd/lox.pgz",
         "//","/*","*/",
         HL_HIGHLIGHT_STRINGS | HL_HIGHLIGHT_NUMBERS
     }, NULL
@@ -244,9 +249,7 @@ void disableRawMode() {
 /* Called at exit to avoid remaining in raw mode. */
 void editorAtExit(void) {
     disableRawMode();
-    sys_txt_set_color(chan_dev, initialFgColor, initialBgColor);
-    char *s = "\x1B[2J\x1B[H";
-    sys_chan_write(0, (unsigned char *)s, strlen(s));
+    restoreDisplay();
 }
 
 /* Raw mode: 1960 magic shit. */
@@ -264,7 +267,7 @@ int editorReadKey() {
     int nread;
     char c, seq[3];
 
-    nread = sys_chan_read(0,&c,1);
+    nread = sys_chan_read(0,(unsigned char *)&c,1);
     if (nread == -1) exit(1);
     //return c;
 
@@ -272,14 +275,14 @@ int editorReadKey() {
         switch(c) {
         case ESC:    /* escape sequence */
             /* If this is just an ESC, we'll timeout here. */
-            if (sys_chan_read(0,seq,1) == 0) return ESC;
-            if (sys_chan_read(0,seq+1,1) == 0) return ESC;
+            if (sys_chan_read(0,(unsigned char *)seq,1) == 0) return ESC;
+            if (sys_chan_read(0,(unsigned char *)seq+1,1) == 0) return ESC;
 
             /* ESC [ sequences. */
             if (seq[0] == '[') {
                 if (seq[1] >= '0' && seq[1] <= '9') {
                     /* Extended escape, read additional byte. */
-                    if (sys_chan_read(0,seq+2,1) == 0) return ESC;
+                    if (sys_chan_read(0,(unsigned char *)seq+2,1) == 0) return ESC;
                     if (seq[2] == '~') {
                         switch(seq[1]) {
                         case '3': return DEL_KEY;
@@ -325,7 +328,7 @@ int getCursorPosition(int *rows, int *cols) {
 
     /* Read the response: ESC [ rows ; cols R */
     while (i < sizeof(buf)-1) {
-        if (sys_chan_read(0,buf+i,1) != 1) break;
+        if (sys_chan_read(0,(unsigned char *)buf+i,1) != 1) break;
         if (buf[i] == 'R') break;
         i++;
     }
@@ -536,7 +539,7 @@ static int strEndsWith(const char *str, const char *suffix)
     return strncmp(str + lenstr - lensuffix, suffix, lensuffix) == 0;
 }
 
-void editorSelectSyntaxHighlight(char *filename) {
+void editorSelectSyntaxHighlight(const char *filename) {
     struct editorSyntax *s = HLDB;
 
     while(s != NULL) {
@@ -544,7 +547,7 @@ void editorSelectSyntaxHighlight(char *filename) {
 
         char **ext = s->filematch;
         while (ext != NULL) {
-            if (strEndsWith(filename, ext)) {
+            if (strEndsWith(filename, *ext)) {
                 E.syntax = s;
                 return;
             }
@@ -798,7 +801,7 @@ void editorDelChar() {
 
 /* Load the specified program in the editor memory and returns 0 on success
  * or 1 on error. */
-int editorOpen(char *filename) {
+int editorOpen(const char *filename) {
     FILE *fp;
 
     E.dirty = 0;
@@ -1240,6 +1243,9 @@ void editorProcessKeypress() {
             editorMoveCursor(ARROW_LEFT);
         }
         break;
+    case CTRL_R:
+        runInterpreter();
+        break;
     case CTRL_U:
     case CTRL_D:
     case PAGE_UP:
@@ -1289,6 +1295,12 @@ void updateWindowSize(void) {
     E.screenrows -= 2; /* Get room for status bar. */
 }
 
+void restoreDisplay() {
+    sys_txt_set_color(chan_dev, initialFgColor, initialBgColor);
+    char *s = "\x1B[2J\x1B[H";
+    sys_chan_write(0, (unsigned char *)s, strlen(s));
+}
+
 void initEditor(void) {
     E.cx = 0;
     E.cy = 0;
@@ -1305,8 +1317,25 @@ void initEditor(void) {
     updateWindowSize();
 
     sys_txt_get_color(chan_dev, &initialFgColor, &initialBgColor);
-
     sys_chan_write(0,(unsigned char *)"\x1b[37;40m",8);
+}
+
+void runInterpreter() {
+    char *arguments[] = {
+        E.syntax->interpreter,
+        E.filename
+    };
+
+    if (E.syntax->interpreter) {
+        const char *prevShell = sys_var_get("shell");
+        sys_var_set("shell", "edit.pgz");
+        sys_var_set("edit_shell", prevShell);
+        sys_var_set("edit_filename", E.filename);
+        restoreDisplay();
+        sys_proc_run(E.syntax->interpreter, 2, arguments);
+    } else {
+        editorSetStatusMessage("Interpreter not available for: %s", E.filename);
+    }
 }
 
 // Missing posix functions
@@ -1356,17 +1385,27 @@ getline(char **buf, size_t *bufsiz, FILE *fp)
 }
 
 int main(int argc, char **argv) {
-    if (argc != 2) {
-        fprintf(stderr,"Usage: edit <filename>\n");
-        exit(1);
+    const char *edit_filename = sys_var_get("edit_filename");
+    const char *edit_shell = sys_var_get("edit_shell");
+    
+    if(strlen(edit_filename) > 0) {
+        sys_var_set("shell", edit_shell);
+        sys_var_set("edit_shell", NULL);
+        sys_var_set("edit_filename", NULL);
+    } else {
+        if (argc != 2) {
+            fprintf(stderr,"Usage: edit <filename>\n");
+            exit(1);
+        }
+        edit_filename = argv[1];
     }
 
     initEditor();
-    editorSelectSyntaxHighlight(argv[1]);
-    editorOpen(argv[1]);
+    editorSelectSyntaxHighlight(edit_filename);
+    editorOpen(edit_filename);
     enableRawMode();
     editorSetStatusMessage(
-        "HELP: Ctrl-S = save | Ctrl-Q = quit | Ctrl-F = find");
+        "HELP: Ctrl-S = save | Ctrl-Q = quit | Ctrl-F = find | Ctrl-R = run");
     while(1) {
         editorRefreshScreen();
         editorProcessKeypress();
