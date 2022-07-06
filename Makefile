@@ -6,7 +6,7 @@ BUILD_VER = 1.0.0 ($(shell git branch --show-current), $(shell date +"%b %d %Y %
 
 # Common source files
 ASM_SRCS =
-C_SRCS = edit.c
+C_SRCS = edit.c input.c
  
 MODEL = --code-model=large --data-model=large
 LIB_MODEL = lc-ld

@@ -46,6 +46,7 @@
 #include <fcntl.h>
 #include <signal.h>
 #include "mcp/syscalls.h"
+#include "input.h"
 
 /* Syntax highlight types */
 #define HL_NORMAL 0
@@ -149,35 +150,6 @@ struct editorConfig {
 };
 
 static struct editorConfig E;
-
-enum KEY_ACTION{
-    KEY_NULL = 0,       /* NULL */        
-    CTRL_A, CTRL_B, CTRL_C, CTRL_D,
-    CTRL_E, CTRL_F, CTRL_G, CTRL_H,
-    TAB,    CTRL_J, CTRL_K, CTRL_L,
-    ENTER,  CTRL_N, CTRL_O, CTRL_P,
-    CTRL_Q, CTRL_R, CTRL_S, CTRL_T,
-    CTRL_U, CTRL_V, CTRL_W, CTRL_X,
-    CTRL_Y, CTRL_Z, ESC,
-    // Function Keys
-    F1 = 112,
-    F2,  F3,  F4,  F5,
-    F6,  F7,  F8,  F9,
-    F10, F11, F12,
-
-    BACKSPACE =  127,   /* Backspace */
-    /* The following are just soft codes, not really reported by the
-        * terminal directly. */
-    ARROW_LEFT = 1000,
-    ARROW_RIGHT,
-    ARROW_UP,
-    ARROW_DOWN,
-    DEL_KEY,
-    HOME_KEY,
-    END_KEY,
-    PAGE_UP,
-    PAGE_DOWN
-};
 
 void editorSetStatusMessage(const char *fmt, ...);
 void restoreDisplay();
@@ -321,60 +293,6 @@ int enableRawMode() {
     return 0;
 }
 
-/* Read a key from the terminal put in raw mode, trying to handle
- * escape sequences. */
-int editorReadKey() {
-    int nread;
-    char c, seq[3];
-
-    nread = sys_chan_read(0,(unsigned char *)&c,1);
-    if (nread == -1) exit(1);
-    //return c;
-
-    while(1) {
-        switch(c) {
-        case ESC:    /* escape sequence */
-            /* If this is just an ESC, we'll timeout here. */
-            if (sys_chan_read(0,(unsigned char *)seq,1) == 0) return ESC;
-            if (sys_chan_read(0,(unsigned char *)seq+1,1) == 0) return ESC;
-
-            /* ESC [ sequences. */
-            if (seq[0] == '[') {
-                if (seq[1] >= '0' && seq[1] <= '9') {
-                    /* Extended escape, read additional byte. */
-                    if (sys_chan_read(0,(unsigned char *)seq+2,1) == 0) return ESC;
-                    if (seq[2] == '~') {
-                        switch(seq[1]) {
-                        case '3': return DEL_KEY;
-                        case '5': return PAGE_UP;
-                        case '6': return PAGE_DOWN;
-                        }
-                    }
-                } else {
-                    switch(seq[1]) {
-                    case 'A': return ARROW_UP;
-                    case 'B': return ARROW_DOWN;
-                    case 'C': return ARROW_RIGHT;
-                    case 'D': return ARROW_LEFT;
-                    case 'H': return HOME_KEY;
-                    case 'F': return END_KEY;
-                    }
-                }
-            }
-
-            /* ESC O sequences. */
-            else if (seq[0] == 'O') {
-                switch(seq[1]) {
-                case 'H': return HOME_KEY;
-                case 'F': return END_KEY;
-                }
-            }
-            break;
-        default:
-            return c;
-        }
-    }
-}
 
 /* Use the ESC [6n escape sequence to query the horizontal cursor position
  * and return it. On error -1 is returned, on success the position of the
@@ -602,6 +520,7 @@ static int strEndsWith(const char *str, const char *suffix)
 void editorSelectSyntaxHighlight(const char *filename) {
     struct editorSyntax *ptr = HLDB;
     while(ptr != NULL) {
+        //printf("Matching - Filename: %s, Extention: %s\n", filename, ptr->extension);
         if (strEndsWith(filename, ptr->extension)) {
             E.syntax = ptr;
             break; 
@@ -1104,8 +1023,9 @@ void editorFind() {
             "Search: %s (Use ESC/Arrows/Enter)", query);
         editorRefreshScreen();
 
-        int c = editorReadKey();
-        if (c == DEL_KEY || c == CTRL_H || c == BACKSPACE) {
+        int c = cli_getchar(0);
+        c = c & 0xFFFF;
+        if (c == BACKSPACE) {
             if (qlen != 0) query[--qlen] = '\0';
             last_match = -1;
         } else if (c == ESC || c == ENTER) {
@@ -1116,9 +1036,9 @@ void editorFind() {
             FIND_RESTORE_HL;
             editorSetStatusMessage("");
             return;
-        } else if (c == ARROW_RIGHT || c == ARROW_DOWN) {
+        } else if (c == CLI_KEY_RIGHT || c == CLI_KEY_DOWN) {
             find_next = 1;
-        } else if (c == ARROW_LEFT || c == ARROW_UP) {
+        } else if (c == CLI_KEY_LEFT || c == CLI_KEY_UP) {
             find_next = -1;
         } else if (isprint(c)) {
             if (qlen < KILO_QUERY_LEN) {
@@ -1175,6 +1095,28 @@ void editorFind() {
 }
 
 /* ========================= Editor events handling  ======================== */
+void editorMoveHome() {
+    E.coloff = 0;
+    E.cx = 0;
+}
+
+void editorMoveEnd() {
+    int filerow = E.rowoff+E.cy;
+    int filecol = E.coloff+E.cx;
+    int rowlen;
+    erow *row = (filerow >= E.numrows) ? NULL : &E.row[filerow];
+    rowlen = row ? row->size : 0;
+
+    if (rowlen > 0) {
+        if (rowlen > E.screencols) {
+            E.coloff = E.screencols / rowlen * E.screencols;
+            E.cx = E.screencols % rowlen;
+        } else {
+            E.coloff = 0;
+            E.cx = rowlen;
+        }
+    }
+}
 
 /* Handle cursor position change because arrow keys were pressed. */
 void editorMoveCursor(int key) {
@@ -1184,8 +1126,7 @@ void editorMoveCursor(int key) {
     erow *row = (filerow >= E.numrows) ? NULL : &E.row[filerow];
 
     switch(key) {
-    case CTRL_B:
-    case ARROW_LEFT:
+    case CLI_KEY_LEFT:
         if (E.cx == 0) {
             if (E.coloff) {
                 E.coloff--;
@@ -1203,8 +1144,7 @@ void editorMoveCursor(int key) {
             E.cx -= 1;
         }
         break;
-    case CTRL_F:
-    case ARROW_RIGHT:
+    case CLI_KEY_RIGHT:
         if (row && filecol < row->size) {
             if (E.cx == E.screencols-1) {
                 E.coloff++;
@@ -1221,16 +1161,14 @@ void editorMoveCursor(int key) {
             }
         }
         break;
-    case CTRL_P:
-    case ARROW_UP:
+    case CLI_KEY_UP:
         if (E.cy == 0) {
             if (E.rowoff) E.rowoff--;
         } else {
             E.cy -= 1;
         }
         break;
-    case CTRL_N:
-    case ARROW_DOWN:
+    case CLI_KEY_DOWN:
         if (filerow < E.numrows) {
             if (E.cy == E.screenrows-1) {
                 E.rowoff++;
@@ -1254,6 +1192,14 @@ void editorMoveCursor(int key) {
     }
 }
 
+void editorMovePage(int key) {
+    int dir = CLI_KEY_DOWN;
+    if (key == (CLI_FLAG_CTRL | CLI_KEY_UP)) {
+        dir = CLI_KEY_UP;
+    }
+    for(int i=0; i<E.screenrows; i++) editorMoveCursor(dir);
+}
+
 /* Process events arriving from the standard input, which is, the user
  * is typing stuff on the terminal. */
 #define EDIT_QUIT_TIMES 3
@@ -1262,90 +1208,75 @@ void editorProcessKeypress() {
      * before actually quitting. */
     static int quit_times = EDIT_QUIT_TIMES;
 
-    int c = editorReadKey();
-    switch(c) {
-    case ENTER:         /* Enter */
-        editorInsertNewline();
-        break;
-    case CTRL_C:        /* Ctrl-c */
-        /* We ignore ctrl-c, it can't be so simple to lose the changes
-         * to the edited file. */
-        break;
-    case CTRL_Q:        /* Ctrl-q */
-        /* Quit if the file was already saved. */
-        if (E.dirty && quit_times) {
-            editorSetStatusMessage("WARNING!!! File has unsaved changes. "
-                "Press Ctrl-Q %d more times to quit.", quit_times);
-            quit_times--;
-            return;
-        }
-        exit(0);
-        break;
-    case CTRL_S:        /* Ctrl-s */
-        editorSave();
-        break;
-    case CTRL_W:
-        editorFind();
-        break;
-    case DEL_KEY:
-        editorMoveCursor(ARROW_RIGHT);
-        editorDelChar();
-        break;
-    case BACKSPACE:     /* Backspace */  
-        editorDelChar();
-        break;
-    case CTRL_A:
-        while (E.cx > 0 || E.coloff > 0) {
-            editorMoveCursor(ARROW_LEFT);
-        }
-        break;
-    case CTRL_E:
-        while (E.cx + E.coloff < E.row->size) {
-            editorMoveCursor(ARROW_RIGHT);
-        }
-        break;
-    case CTRL_R:
-        runInterpreter();
-        break;
-    case CTRL_H:
-        showHelp();
-        break;
+    int c = cli_getchar(0);
 
-    case CTRL_U:
-    case CTRL_D:
-    case PAGE_UP:
-    case PAGE_DOWN:
-        if ((c == PAGE_UP || c == CTRL_U) && E.cy != 0)
-            E.cy = 0;
-        else if ((c == PAGE_DOWN || c == CTRL_D) && E.cy != E.screenrows-1)
-            E.cy = E.screenrows-1;
-        {
-        int times = E.screenrows;
-        while(times--)
-            editorMoveCursor((c == PAGE_UP || c == CTRL_U) ? ARROW_UP:
-                                            ARROW_DOWN);
+    if ((c & 0xF000) == 0) {
+        int k = c & 0x00FF;
+        // Ordinary Key
+        switch(k) {
+            case ENTER:
+                editorInsertNewline();
+                break;
+            case CTRL_Q:        /* Ctrl-q */
+                /* Quit if the file was already saved. */
+                if (E.dirty && quit_times) {
+                    editorSetStatusMessage("WARNING!!! File has unsaved changes. "
+                        "Press Ctrl-Q %d more times to quit.", quit_times);
+                    quit_times--;
+                    return;
+                }
+                exit(0);
+                break;
+            case CTRL_S:        /* Ctrl-s */
+                editorSave();
+                break;
+            case CTRL_W:
+                editorFind();
+                break;
+            case BACKSPACE:     /* Backspace */  
+                editorDelChar();
+                break;
+            case CTRL_R:
+                runInterpreter();
+                break;
+            case CTRL_A: {
+                editorMoveHome();
+                break;
+            }
+            case CTRL_E: {
+                editorMoveEnd();
+                break;
+            }
+        
+            default:
+                if (c >= 0x20) {
+                    editorInsertChar(c);
+                }
+                break;
         }
-        break;
 
-    case CTRL_B:
-    case CTRL_F:
-    case CTRL_P:
-    case CTRL_N:
-    case ARROW_UP:
-    case ARROW_DOWN:
-    case ARROW_LEFT:
-    case ARROW_RIGHT:
-        editorMoveCursor(c);
-        break;
-    case CTRL_L: /* ctrl+l, clear screen */
-        /* Just refresht the line as side effect. */
-        break;
-    case ESC:
-        /* Nothing to do for ESC in this mode. */
-        break;
-    default:
-        editorInsertChar(c);
-        break;
+    } else {
+        // Special Key
+        int k = c & 0xFFFF;
+        switch(k) {
+            case CLI_KEY_DEL:
+                editorMoveCursor(CLI_KEY_RIGHT);
+                editorDelChar();
+                break;
+            case CLI_KEY_HELP:
+                showHelp();
+                break;
+            case CLI_FLAG_CTRL | CLI_KEY_UP:
+            case CLI_FLAG_CTRL | CLI_KEY_DOWN:
+                editorMovePage(k);               
+                break;
+            case CLI_KEY_UP:
+            case CLI_KEY_DOWN:
+            case CLI_KEY_LEFT:
+            case CLI_KEY_RIGHT:
+                editorMoveCursor(k);
+                break;
+        }
     }
 
     quit_times = EDIT_QUIT_TIMES; /* Reset it to the original value. */
