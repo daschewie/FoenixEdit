@@ -70,16 +70,7 @@ static char *helpText =
     "File handling\n"
     "-------------\n"
     "Ctrl+S  Save current file\n"
-    "Ctrl+O  [*] Offer to write file (Save as)\n"
-    "Ctrl+L  [*] Load a file\n"
     "Ctrl+Q  Quit Foenix Editor\n"
-    "\n"
-    "Editing\n"
-    "-------\n"
-    "Ctrl+T  [*] Tag (Mark) On/Off\n"
-    "Ctrl+X  [*] Cut current line into cutbuffer\n"
-    "Ctrl+C  [*] Copy current line into cutbuffer\n"
-    "Ctrl+V  [*] Paste contents of cutbuffer\n"
     "\n"
     "Operations\n"
     "----------\n"
@@ -88,14 +79,14 @@ static char *helpText =
     "\n"
     "Moving around\n"
     "-------------\n"
-    "Ctrl+B  One character backward\n"
-    "Ctrl+F  One character forward\n"
-    "Ctrl+A  To start of line\n"
-    "Ctrl+E  To end of line\n"
-    "Ctrl+P  One line up\n"
-    "Ctrl+N  One line down\n"
-    "Ctrl+U  One page up\n"
-    "Ctrl+D  One page down\n"
+    "Left        One character backward\n"
+    "Right       One character forward\n"
+    "Ctrl+Left   To start of line\n"
+    "Ctrl+Right  To end of line\n"
+    "Up          One line up\n"
+    "Down        One line down\n"
+    "Ctrl+Up     One page up\n"
+    "Ctrl+Down   One page down\n"
     "Ctrl+G  [*] Go to Line\n"
     "\n"
     "[*] = WIP, Comming Soon.\n"
@@ -290,47 +281,6 @@ int enableRawMode() {
     atexit(editorAtExit);
     sys_chan_ioctrl(0, 0x04, 0, 0);
     E.rawmode = 1;
-    return 0;
-}
-
-
-/* Use the ESC [6n escape sequence to query the horizontal cursor position
- * and return it. On error -1 is returned, on success the position of the
- * cursor is stored at *rows and *cols and 0 is returned. */
-int getCursorPosition(int *rows, int *cols) {
-    char buf[32];
-    unsigned int i = 0;
-
-    /* Report cursor location */
-    if (sys_chan_write(0, (unsigned char *)"\x1b[6n", 4) != 4) return -1;
-
-    /* Read the response: ESC [ rows ; cols R */
-    while (i < sizeof(buf)-1) {
-        if (sys_chan_read(0,(unsigned char *)buf+i,1) != 1) break;
-        if (buf[i] == 'R') break;
-        i++;
-    }
-    buf[i] = '\0';
-
-    /* Parse it. */
-    if (buf[0] != ESC || buf[1] != '[') return -1;
-    if (sscanf(buf+2,"%d;%d",rows,cols) != 2) return -1;
-    return 0;
-}
-
-/* Try to get the number of columns in the current terminal. If the ioctl()
- * call fails the function will try to query the terminal itself.
- * Returns 0 on success, -1 on error. */
-int getWindowSize(int ifd, int ofd, int *rows, int *cols) {
-    t_rect region = {0};
-
-    if (sys_txt_get_region(chan_dev, &region) == 0) {
-        *rows = region.size.height;
-	    *cols = region.size.width;
-    } else {
-        *cols = 80;
-        *rows = 25;
-    }
     return 0;
 }
 
@@ -876,14 +826,10 @@ void editorRefreshScreen(void) {
                 int welcomelen = snprintf(welcome,sizeof(welcome),
                     "Foenix Edit -- verison %s\x1b[0K\n", EDIT_VERSION);
                 int padding = (E.screencols-welcomelen)/2;
-                if (padding) {
-                    abAppend(&ab,"~",1);
-                    padding--;
-                }
                 while(padding--) abAppend(&ab," ",1);
                 abAppend(&ab,welcome,welcomelen);
             } else {
-                abAppend(&ab,"~\x1b[0K\n",6);
+                abAppend(&ab,"\x1b[0K\n",5);
             }
             continue;
         }
@@ -1239,14 +1185,6 @@ void editorProcessKeypress() {
             case CTRL_R:
                 runInterpreter();
                 break;
-            case CTRL_A: {
-                editorMoveHome();
-                break;
-            }
-            case CTRL_E: {
-                editorMoveEnd();
-                break;
-            }
         
             default:
                 if (c >= 0x20) {
@@ -1265,6 +1203,12 @@ void editorProcessKeypress() {
                 break;
             case CLI_KEY_HELP:
                 showHelp();
+                break;
+            case CLI_FLAG_CTRL | CLI_KEY_LEFT:
+                editorMoveHome();
+                break;
+            case CLI_FLAG_CTRL | CLI_KEY_RIGHT:
+                editorMoveEnd();
                 break;
             case CLI_FLAG_CTRL | CLI_KEY_UP:
             case CLI_FLAG_CTRL | CLI_KEY_DOWN:
@@ -1287,11 +1231,16 @@ int editorFileWasModified(void) {
 }
 
 void updateWindowSize(void) {
-    if (getWindowSize(STDIN_FILENO,STDOUT_FILENO,
-                      &E.screenrows,&E.screencols) == -1) {
-        perror("Unable to query the screen for size (columns / rows)");
-        exit(1);
+    t_rect region = {0};
+
+    if (sys_txt_get_region(chan_dev, &region) == 0) {
+        E.screenrows = region.size.height;
+	    E.screencols = region.size.width;
+    } else {
+        E.screenrows  = 80;
+        E.screencols = 25;
     }
+
     E.screenrows -= 2; /* Get room for status bar. */
 }
 
@@ -1350,7 +1299,7 @@ void runInterpreter() {
     }
 }
 
-// Missing posix functions
+// Missing posix function
 ssize_t
 getdelim(char **buf, size_t *bufsiz, int delimiter, FILE *fp)
 {
@@ -1390,6 +1339,7 @@ getdelim(char **buf, size_t *bufsiz, int delimiter, FILE *fp)
 	}
 }
 
+// Missing posix function
 ssize_t
 getline(char **buf, size_t *bufsiz, FILE *fp)
 {
@@ -1417,7 +1367,7 @@ int main(int argc, char **argv) {
     editorOpen(edit_filename);
     enableRawMode();
     editorSetStatusMessage(
-        "Press Ctrl-H for HELP.");
+        "Press HELP key for instructions.");
     while(1) {
         editorRefreshScreen();
         editorProcessKeypress();
