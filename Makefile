@@ -25,10 +25,10 @@ obj/%.o: %.s
 	as68k --core=68000 $(MODEL) --debug --list-file=$(@:%.o=%.lst) -o $@ $<
 
 obj/%.o: %.c
-	cc68k $(C_FLAGS) --core=68000 $(MODEL) --debug --list-file=$(@:%.o=%.lst) -o $@ $<
+	cc68k $(C_FLAGS) --core=68000 $(MODEL) --list-file=$(@:%.o=%.lst) -o $@ $<
 
 obj/%-debug.o: %.s
-	as68k --core=68000 $(MODEL) --debug --list-file=$(@:%.o=%.lst) -o $@ $<
+	as68k --core=68000 $(MODEL) --list-file=$(@:%.o=%.lst) -o $@ $<
 
 obj/%-debug.o: %.c
 	cc68k $(C_FLAGS) --core=68000 $(MODEL) --debug --list-file=$(@:%.o=%.lst) -o $@ $<
@@ -36,7 +36,7 @@ obj/%-debug.o: %.c
 $(EXEC).pgz:  $(OBJS)
 	ln68k -o $@ $^ $(A2560K_RULES) clib-68000-$(LIB_MODEL).a $(FOENIX_LIB) --output-format=pgz --list-file=$(EXEC).lst --cross-reference --rtattr printf=float --rtattr scanf=float --rtattr cstartup=Foenix_user --stack-size=65536 --heap-size=262144
 
-$(EXEC).elf:  $(OBJS)
+$(EXEC).elf:  $(OBJS_DEBUG)
 	ln68k -o $@ $^ $(A2560K_RULES) --debug clib-68000-$(LIB_MODEL).a $(FOENIX_LIB) --list-file=$(EXEC).lst --cross-reference --rtattr printf=float --rtattr scanf=float --rtattr cstartup=Foenix_user --stack-size=65536 --heap-size=262144
 
 clean:

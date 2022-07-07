@@ -86,10 +86,6 @@ typedef struct erow {
                            check. */
 } erow;
 
-typedef struct hlcolor {
-    int r,g,b;
-} hlcolor;
-
 struct editorConfig {
     int cx,cy;  /* Cursor x and y position in characters */
     int rowoff;     /* Offset of row displayed. */
@@ -269,6 +265,7 @@ int editorRowHasOpenComment(erow *row) {
 /* Set every byte of row->hl (that corresponds to every character in the line)
  * to the right syntax highlight type (HL_* defines). */
 void editorUpdateSyntax(erow *row) {
+    return;
     row->hl = realloc(row->hl,row->rsize);
     memset(row->hl,HL_NORMAL,row->rsize);
 
@@ -595,7 +592,7 @@ void editorRowDelChar(erow *row, int at) {
 }
 
 /* Insert the specified char at the current prompt position. */
-void editorInsertChar(int c) {
+void editorInsertChar(int c) {    
     int filerow = E.rowoff+E.cy;
     int filecol = E.coloff+E.cx;
     erow *row = (filerow >= E.numrows) ? NULL : &E.row[filerow];
@@ -771,6 +768,31 @@ void abFree(struct abuf *ab) {
     free(ab->b);
 }
 
+void renderStatusLine(struct abuf *ab) {
+    char status[80], rstatus[80];
+    int len, rlen;
+    if(E.numrows > 0) {
+        len = snprintf(status, sizeof(status), "%.20s - %d lines %s",
+            E.filename, E.numrows, E.dirty ? "(modified)" : "");
+        rlen = snprintf(rstatus, sizeof(rstatus),
+            "%d/%d",E.rowoff+E.cy+1,E.numrows);
+    } else {
+        len = snprintf(status, sizeof(status), "%.20s - empty", E.filename);
+        rlen = snprintf(rstatus, sizeof(rstatus), "-/-");
+    }
+    if (len > E.screencols) len = E.screencols;
+    abAppend(ab,status,len);
+    while(len < E.screencols) {
+        if (E.screencols - len == rlen) {
+            abAppend(ab,rstatus,rlen);
+            break;
+        } else {
+            abAppend(ab," ",1);
+            len++;
+        }
+    }
+}
+
 /* This function writes the whole screen using VT100 escape characters
  * starting from the logical state of the editor in the global state 'E'. */
 void editorRefreshScreen(void) {
@@ -805,7 +827,7 @@ void editorRefreshScreen(void) {
         int len = r->rsize - E.coloff;
         int current_color = -1;
         if (len > 0) {
-            if (len > E.screencols) len = E.screencols;
+            if (len >= E.screencols) len = E.screencols - 1;
             char *c = r->render+E.coloff;
             unsigned char *hl = r->hl+E.coloff;
             int j;
@@ -850,22 +872,7 @@ void editorRefreshScreen(void) {
     abAppend(&ab,"\x1b[0K",4);
     //abAppend(&ab,"\x1b[7m",4);
     abAppend(&ab,"\x1b[30;47m",8);
-    char status[80], rstatus[80];
-    int len = snprintf(status, sizeof(status), "%.20s - %d lines %s",
-        E.filename, E.numrows, E.dirty ? "(modified)" : "");
-    int rlen = snprintf(rstatus, sizeof(rstatus),
-        "%d/%d",E.rowoff+E.cy+1,E.numrows);
-    if (len > E.screencols) len = E.screencols;
-    abAppend(&ab,status,len);
-    while(len < E.screencols) {
-        if (E.screencols - len == rlen) {
-            abAppend(&ab,rstatus,rlen);
-            break;
-        } else {
-            abAppend(&ab," ",1);
-            len++;
-        }
-    }
+    renderStatusLine(&ab);
     //abAppend(&ab,"\x1b[0m\n",5);
     abAppend(&ab,"\x1b[37;40m",8);
     /* Second row depends on E.statusmsg and the status message update time. */
@@ -1021,8 +1028,8 @@ void editorMoveEnd() {
 
     if (rowlen > 0) {
         if (rowlen > E.screencols) {
-            E.coloff = E.screencols / rowlen * E.screencols;
-            E.cx = E.screencols % rowlen;
+            E.coloff =  rowlen / E.screencols * E.screencols;
+            E.cx = rowlen - E.coloff;
         } else {
             E.coloff = 0;
             E.cx = rowlen;
@@ -1081,7 +1088,7 @@ void editorMoveCursor(int key) {
         }
         break;
     case CLI_KEY_DOWN:
-        if (filerow < E.numrows) {
+        if (filerow < E.numrows-1) {
             if (E.cy == E.screenrows-1) {
                 E.rowoff++;
             } else {
@@ -1120,8 +1127,7 @@ void editorProcessKeypress() {
      * before actually quitting. */
     static int quit_times = EDIT_QUIT_TIMES;
 
-    int c = cli_getchar(0);
-
+    int c = cli_getchar(0);    
     if ((c & 0xF000) == 0) {
         int k = c & 0x00FF;
         // Ordinary Key
@@ -1219,7 +1225,7 @@ void restoreDisplay() {
 void showHelp() {
     restoreDisplay();
     printf(helpText);
-    sys_chan_read_b(0);
+    cli_getchar(0);
     sys_chan_write(0,(unsigned char *)"\x1b[37;40m",8);
 }
 
@@ -1244,6 +1250,11 @@ void initEditor(void) {
 }
 
 void runInterpreter() {
+    if (E.dirty) {
+        editorSetStatusMessage("Unable to launch interpreter with unsaved file");
+        return;
+    }
+
     char *interpreter = E.syntax->interpreter;
     char *filename = E.filename;    
     char *arguments[] = { interpreter, filename };
