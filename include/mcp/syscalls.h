@@ -863,6 +863,17 @@ extern void sys_txt_set_color(short screen, unsigned char foreground, unsigned c
  */
 extern void sys_txt_get_color(short screen, unsigned char * foreground, unsigned char * background);
 
+/*
+ * Get the foreground and background color for printing
+ *
+ * Inputs:
+ * screen = the screen number 0 for channel A, 1 for channel B
+ * enable = TRUE if the cursor should be visible, FALSE (0) otherwise
+ * rate = the blink rate: 0=1hz, 1=2hz, 2=4hz, and 3=16hz
+ * glyph = Character to use as cursor
+ */
+extern void sys_txt_set_cursor(short screen, short enable, short rate, char glyph);
+
 /**
  * Set if the cursor is visible or not
  *

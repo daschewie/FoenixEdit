@@ -28,6 +28,8 @@
 #define HL_HIGHLIGHT_STRINGS (1<<0)
 #define HL_HIGHLIGHT_NUMBERS (1<<1)
 
+#include "vga_font.h"
+
 static char *helpText = 
     "\nFoenix Edit -- version " EDIT_VERSION "\n\n"
     "Copyright (C) 2016 Salvatore Sanfilippo\n"
@@ -105,6 +107,7 @@ struct editorConfig {
 static struct editorConfig E;
 
 void editorSetStatusMessage(const char *fmt, ...);
+void updateCursorGlyph();
 void restoreDisplay();
 void runInterpreter();
 void showHelp();
@@ -899,6 +902,11 @@ void editorRefreshScreen(void) {
     //abAppend(&ab,"\x1b[?25h",6); /* Show cursor. */
     sys_chan_write(0,(unsigned char *)ab.b,ab.len);
     sys_txt_set_xy(chan_dev, cx-1, E.cy);
+
+#ifdef USE_CURSOR_GLYPH    
+    updateCursorGlyph();
+#endif
+    
     sys_txt_set_cursor_visible(chan_dev, 1);
     abFree(&ab);
 }
@@ -1243,11 +1251,40 @@ void initEditor(void) {
 
     chan_dev = sys_chan_device(0);
 
+#ifdef USE_FONTS
+    // Set 8x16 font, if it fails, the default font is used.
+    sys_txt_get_capabilities(chan_dev);
+    sys_txt_set_font(chan_dev,8,16,vgaFont);
+#endif
+
+#ifdef USE_CURSOR_GLYPH  
+    sys_txt_set_cursor(chan_dev, 1, 2, 255);
+#endif
+
     updateWindowSize();
 
     sys_txt_get_color(chan_dev, &initialFgColor, &initialBgColor);
     sys_chan_write(0,(unsigned char *)"\x1b[37;40m",8);
 }
+
+#ifdef USE_CURSOR_GLYPH  
+    void updateCursorGlyph() {
+        int filerow = E.rowoff+E.cy;
+        int filecol = E.coloff+E.cx;
+        erow *row = (filerow >= E.numrows) ? NULL : &E.row[filerow];
+        unsigned char c = ' ';
+        if (row != NULL) {
+            c = row->render[filecol];
+        }
+        int s_offset = c * 16;
+        int d_offset = 255 * 16;
+        unsigned char *font_glyph = vgaFont + s_offset;
+        unsigned char *cursor_glyph = (unsigned char *) 0xFEC48000 + d_offset;
+        for (int i=0; i<16; i++) {
+            *(cursor_glyph + i) = *(font_glyph + i) | 128;
+        }
+    }
+#endif
 
 void runInterpreter() {
     if (E.dirty) {
